@@ -53,6 +53,10 @@ _PROGRAMS = {
     "NEWCOMER": ("ell_newcomer_count", "Newcomer ELLs"),
     "DEVELOPING": ("ell_developing_count", "Developing ELLs"),
     "LONG_TERM": ("ell_long_term_count", "Long-Term ELLs"),
+    # 2023-24+ names for the same three bands (years receiving ELL services).
+    "0-3 YEARS": ("ell_newcomer_count", "Newcomer ELLs"),
+    "4-6 YEARS": ("ell_developing_count", "Developing ELLs"),
+    "7+ YEARS": ("ell_long_term_count", "Long-Term ELLs"),
     "SIFE": ("ell_sife_count", "Students with Interrupted/Inconsistent Formal Education (SIFE)"),
     "ENG_NEW_LANG": ("ell_program_enl_count", "English as a New Language (ENL) program"),
     "ONE_TWO_WAY_DUAL_LANG": ("ell_program_dual_language_count", "Dual Language program"),

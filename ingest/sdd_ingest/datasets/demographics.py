@@ -16,7 +16,7 @@ from typing import List
 from ..mdb import find_table, read_table
 from ..melt import melt_specs
 from ..model import FactRecord, MetricSpec
-from ..values import school_year_from_fall
+from ..values import school_year_from_ending
 
 SOURCE = "NYSED BEDS Day Enrollment"
 CATEGORY = "Demographics"
@@ -76,10 +76,10 @@ def _specs():
 
 def build(path: str, school_year: str, dict_path: str | None = None) -> List[FactRecord]:
     # Self-describing columns, so dict_path is unused. The file carries several
-    # fall snapshots (YEAR); keep only this folder's own school year so we don't
+    # snapshots (YEAR = ending year); keep only this folder's own school year so we don't
     # leak a sparse adjacent year (e.g. a future 2025-26 or an older 2021-22).
     table = find_table(path, "Demographic Factors") or "Demographic Factors"
     df = read_table(path, table)
     if "YEAR" in df.columns:
-        df = df[df["YEAR"].map(lambda y: school_year_from_fall(y) == school_year)]
+        df = df[df["YEAR"].map(lambda y: school_year_from_ending(y) == school_year)]
     return melt_specs(df, "ENTITY_CD", "ENTITY_NAME", school_year, _specs())

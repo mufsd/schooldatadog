@@ -93,6 +93,7 @@ def _row_based(df: pd.DataFrame, school_year: str) -> List[FactRecord]:
     df = df[df["VAL"].notna() & df["SUBJECT_AREA"].astype(str).str.strip().ne("")]
     df = df[df["SUBGROUP_NAME"].map(lambda s: canon_subgroup(s) in STANDARD_SUBGROUPS)]
 
+    df = df.drop_duplicates()  # 2023-24 file repeats identical rows
     grouped = df.groupby(keys, as_index=False)["VAL"].sum()
     cache: Dict[Tuple[str, str], MetricSpec] = {}
     records: List[FactRecord] = []

@@ -143,9 +143,19 @@ def _absenteeism(path, school_year):
         out += melt_rows(
             df, "ENTITY_CD", "ENTITY_NAME", measures,
             school_year=school_year, school_year_col="YEAR", year_transform=school_year_from_ending, folder_year_only=True,
-        subgroup_col="SUBGROUP_NAME",
+            subgroup_col="SUBGROUP_NAME",
+            # EM (grades 3-8) and HS rows share an entity + subgroup, so the
+            # level must be part of the metric code or one overwrites the other.
+            dimension_col="SUBJECT", dimension_fn=_absentee_level,
         )
     return out
+
+
+def _absentee_level(subject):
+    return {
+        "38_CA": ("_em", " — elementary/middle (grades 3-8)"),
+        "HS_CA": ("_hs", " — high school"),
+    }.get(str(subject).strip())
 
 
 # --- Teacher / principal experience ----------------------------------------

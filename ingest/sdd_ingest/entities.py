@@ -15,7 +15,8 @@ from typing import Optional
 def infer_entity_type(entity_cd: Optional[str], entity_name: Optional[str] = None) -> str:
     """Return "school", "district", or "state" (used for aggregates too)."""
     cd = (entity_cd or "").strip()
-    if not cd or set(cd) <= {"0"}:
+    # "111111111111" = NYSED statewide total ("All Public Schools").
+    if not cd or set(cd) <= {"0"} or cd == "111111111111":
         return "state"
     # Synthetic statewide / regional aggregate codes start with 8+ zeros.
     if cd[:8] == "00000000":

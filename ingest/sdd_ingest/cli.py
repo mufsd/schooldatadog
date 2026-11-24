@@ -67,6 +67,32 @@ def _preview(records: List[FactRecord], sample: int) -> None:
     print(f"\nSubgroups ({len(subgroups)}): {', '.join(subgroups)}")
 
 
+def _dedupe(records: List[FactRecord]) -> List[FactRecord]:
+    """Collapse facts that share (entity, metric, year, subgroup).
+
+    NYSED occasionally repeats an entity (e.g. Binghamton City SD listed under
+    two BOCES in the 2024-25 grad-rate file, one copy suppressed). Keep a
+    numeric value over a suppression marker; otherwise keep the first, and
+    report conflicting numeric duplicates so they can be looked at.
+    """
+    best = {}
+    conflicts = 0
+    for r in records:
+        k = (r.entity_cd, r.metric.code, r.school_year, r.subgroup)
+        cur = best.get(k)
+        if cur is None:
+            best[k] = r
+        elif cur.value_numeric is None and r.value_numeric is not None:
+            best[k] = r
+        elif (cur.value_numeric is not None and r.value_numeric is not None
+              and cur.value_numeric != r.value_numeric):
+            conflicts += 1
+    if len(best) != len(records):
+        print(f"note: collapsed {len(records) - len(best):,} duplicate facts "
+              f"({conflicts:,} with conflicting numbers; kept the first)")
+    return list(best.values())
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="sdd_ingest")
     parser.add_argument("dataset", choices=sorted(DATASETS))
@@ -95,6 +121,7 @@ def main(argv=None) -> int:
     if before != len(records):
         print(f"Skipped {before - len(records):,} statewide/aggregate facts.")
 
+    records = _dedupe(records)
     _summarize(args.dataset, records)
 
     if args.dry_run:

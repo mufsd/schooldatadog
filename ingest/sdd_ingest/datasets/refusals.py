@@ -19,7 +19,7 @@ from ..values import parse_value
 
 SOURCE = "NYSED Grades 3-8 ELA/Math Test Refusals"
 CATEGORY = "Assessment Refusals"
-_SHEETS = ["ELA", "MATH"]
+_SHEETS = ["ELA", "MATH", "SCIENCE"]
 _ID_HEADERS = {"INSTITUTION_ID", "ENTITY_CD", "ENTITY_NAME", "SUBJECT"}
 
 
