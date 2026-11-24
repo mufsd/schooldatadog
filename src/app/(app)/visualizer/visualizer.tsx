@@ -31,6 +31,10 @@ import { visualizerChat, type ChatMessage } from "@/lib/viz/chat";
 import { columnsOf, resolveDataset, type Row } from "@/lib/viz/resolve";
 import { blankSpec, type CalcFieldSpec, type ChartSpec, type EntitySource, type FieldSpec } from "@/lib/viz/spec";
 import { VegaChart } from "@/lib/viz/vega-chart";
+import { getTrendGrid, getTrendGridOptions } from "@/lib/viz/trend-grid";
+import { TrendGridChart } from "@/lib/viz/trend-grid-chart";
+import { parseTrendGridParams, type TrendGridParams, type TrendGridResult } from "@/lib/viz/trend-grid-spec";
+import { TrendGridControls } from "./trend-grid-controls";
 
 // Friendly, plain-language chart controls (Vega-Lite marks/channels underneath).
 const MARK_OPTIONS = [
@@ -41,6 +45,7 @@ const MARK_OPTIONS = [
   { value: "area", label: "Area" },
   { value: "tick", label: "Ticks" },
   { value: "rect", label: "Heatmap" },
+  { value: "trendgrid", label: "Trend grid (rank over time)" },
 ] as const;
 const BUBBLE_OPTIONS = [
   { v: "circle-filled", label: "Filled circle" },
@@ -153,6 +158,14 @@ export function Visualizer({
   const onChartView = useCallback((v: View | null) => {
     viewRef.current = v;
   }, []);
+
+  // ── Trend grid (engine "trendgrid") — its settings live in spec.params ──
+  const isTrendGrid = spec.engine === "trendgrid";
+  const tgParams = useMemo(() => parseTrendGridParams(spec.params), [spec.params]);
+  const [tgOptions, setTgOptions] = useState<{ years: string[]; subgroups: string[] } | null>(null);
+  // The last computed grid, tagged with the params it was computed for.
+  const [tg, setTg] = useState<{ key: string; res: TrendGridResult } | null>(null);
+  const setTgParams = (next: TrendGridParams) => setSpec((s) => ({ ...s, params: next }));
 
   // metric browser
   const [year, setYear] = useState(years[0] ?? "");
@@ -445,6 +458,10 @@ export function Visualizer({
   function applyAiChart(chart: unknown, userText = "") {
     if (!chart || typeof chart !== "object") return;
     const c = chart as Record<string, unknown>;
+    if (c.engine === "trendgrid") {
+      applyAiTrendGrid(c);
+      return;
+    }
 
     // entities — protect a curated selection (e.g. an imported view). A bare
     // "all districts/schools" only takes effect if it's empty or the user
@@ -490,11 +507,79 @@ export function Visualizer({
     }
   }
 
+  // A trend grid from the AI: names (district, counties, group) → ids/params.
+  function applyAiTrendGrid(c: Record<string, unknown>) {
+    const t = (c.trendgrid && typeof c.trendgrid === "object" ? c.trendgrid : {}) as Record<string, unknown>;
+    const cur = spec.engine === "trendgrid" ? tgParams : parseTrendGridParams({ targetId: homeDistrictId });
+    const lc = (v: unknown) => String(v ?? "").trim().toLowerCase();
+    let targetId = cur.targetId ?? homeDistrictId;
+    if (typeof t.target === "string" && t.target.trim()) {
+      const want = lc(t.target);
+      if (/^my (own )?district$/.test(want)) targetId = homeDistrictId;
+      else {
+        const hit =
+          entities.find((e) => lc(e.name) === want && e.type === "district") ??
+          entities.find((e) => lc(e.name) === want) ??
+          entities.find((e) => e.type === "district" && lc(e.name).includes(want));
+        if (hit) targetId = hit.id;
+      }
+    }
+    let pool = cur.pool;
+    const cmp = t.compareTo;
+    if (cmp === "state") pool = { kind: "state", counties: [] };
+    else if (cmp && typeof cmp === "object") {
+      const o = cmp as Record<string, unknown>;
+      if (Array.isArray(o.counties)) {
+        const picked = counties.filter((k) => (o.counties as unknown[]).some((x) => lc(x).replace(/ county$/, "") === lc(k)));
+        if (picked.length) pool = { kind: "counties", counties: picked };
+      } else if (typeof o.group === "string") {
+        const g = groups.find((x) => lc(x.name) === lc(o.group));
+        if (g) pool = { kind: "group", counties: [], groupId: g.id, groupName: g.name };
+      }
+    }
+    const next = parseTrendGridParams({
+      ...cur,
+      ...Object.fromEntries(
+        ["years", "subgroup", "subjects", "grades", "measure", "buckets", "useCombined"].filter((k) => k in t).map((k) => [k, t[k]]),
+      ),
+      targetId,
+      pool,
+    });
+    setSpec((s) => ({
+      ...s,
+      engine: "trendgrid",
+      params: next,
+      title: typeof c.title === "string" ? c.title || undefined : s.title,
+      theme: c.theme === "app" || c.theme === "print" ? c.theme : s.theme,
+    }));
+  }
+
+  // Scout sometimes writes a Vega-Lite object sort ({field|encoding, order}).
+  // Map it onto the string values the Sort dropdown shows ("-y", "y", …).
+  function normalizeAiSort(enc: ChartSpec["encoding"]): ChartSpec["encoding"] {
+    if (!enc) return enc;
+    const out = { ...enc } as Record<string, Record<string, unknown>>;
+    for (const [ch, def] of Object.entries(out)) {
+      const srt = def?.sort;
+      if (!srt || typeof srt !== "object" || Array.isArray(srt)) continue;
+      const o = srt as { field?: unknown; encoding?: unknown; order?: unknown; op?: unknown };
+      const desc = o.order === "descending";
+      const other = ch === "y" ? "x" : "y";
+      const otherField = out[other]?.field;
+      const byValue = o.encoding === other || (o.field !== undefined && o.field === otherField);
+      out[ch] = { ...def, sort: byValue ? `${desc ? "-" : ""}${other}` : desc ? "descending" : "ascending" };
+    }
+    return out as ChartSpec["encoding"];
+  }
+
   // Every chart-level setting the AI can drive, so the whole page reflects it.
   function aiOverrides(c: Record<string, unknown>, s: ChartSpec): Partial<ChartSpec> {
     return {
+      // A regular chart from the AI replaces a trend grid (back to Vega-Lite).
+      engine: s.engine === "trendgrid" && (c.fields || c.mark || c.encoding) ? "vega-lite" : s.engine,
       mark: typeof c.mark === "string" ? c.mark : s.mark,
-      encoding: (c.encoding as ChartSpec["encoding"]) ?? s.encoding,
+      encoding: c.encoding ? normalizeAiSort(c.encoding as ChartSpec["encoding"]) : s.encoding,
+      dataLabels: typeof c.dataLabels === "boolean" ? c.dataLabels || undefined : s.dataLabels,
       title: typeof c.title === "string" ? c.title : s.title,
       theme: c.theme === "app" || c.theme === "print" ? c.theme : s.theme,
       showLegend: typeof c.showLegend === "boolean" ? c.showLegend : s.showLegend,
@@ -632,9 +717,10 @@ export function Visualizer({
   }, []);
 
   // resolve on data change
-  const dataKey = JSON.stringify(spec.data);
+  const dataKey = JSON.stringify(spec.data) + (isTrendGrid ? "|tg" : "");
   useEffect(() => {
     let live = true;
+    if (isTrendGrid) return; // the trend grid fetches its own data (below)
     if (spec.data.fields.length === 0 || spec.data.entities.ids.length === 0) {
       setRows([]);
       return;
@@ -655,6 +741,38 @@ export function Visualizer({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataKey]);
+
+  // Trend grid: load the control options once, and (re)compute on param change.
+  useEffect(() => {
+    if (!isTrendGrid || tgOptions) return;
+    let live = true;
+    getTrendGridOptions()
+      .then((o) => {
+        if (live) setTgOptions(o);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [isTrendGrid, tgOptions]);
+  const tgKey = isTrendGrid ? JSON.stringify(tgParams) : "";
+  useEffect(() => {
+    if (!tgKey) return;
+    let live = true;
+    getTrendGrid(JSON.parse(tgKey))
+      .then((res) => {
+        if (live) setTg({ key: tgKey, res });
+      })
+      .catch(() => {
+        if (live) setTg({ key: tgKey, res: { ok: false, error: "Couldn't compute the trend grid." } });
+      });
+    return () => {
+      live = false;
+    };
+  }, [tgKey]);
+  // While new params compute, keep showing the previous grid.
+  const tgResult = tg?.res ?? null;
+  const tgLoading = isTrendGrid && tg?.key !== tgKey;
 
   useEffect(() => {
     if (!showJson) setJsonText(JSON.stringify(spec, null, 2));
@@ -858,12 +976,28 @@ export function Visualizer({
 
   // "Chart type" is the mark, plus a "histogram" preset (binned x + count y).
   const chartType = (() => {
+    if (spec.engine === "trendgrid") return "trendgrid";
     const x = spec.encoding?.x as Record<string, unknown> | undefined;
     const y = spec.encoding?.y as Record<string, unknown> | undefined;
     if (spec.mark === "bar" && x?.bin && y?.aggregate === "count") return "histogram";
     return typeof spec.mark === "string" ? spec.mark : "bar";
   })();
   function setChartType(value: string) {
+    if (value === "trendgrid") {
+      // Keep the vega-lite mark/encoding untouched so switching back restores it.
+      setSpec((s) => {
+        const prev = s.params && typeof s.params === "object" ? s.params : {};
+        const params = parseTrendGridParams(prev);
+        if (params.targetId == null && homeDistrictId != null) params.targetId = homeDistrictId;
+        return { ...s, engine: "trendgrid", params };
+      });
+      return;
+    }
+    if (spec.engine === "trendgrid") {
+      // Back to a regular chart: restore the previous mark (unless a new one was picked).
+      setSpec((s) => ({ ...s, engine: "vega-lite" }));
+      if (value === chartTypeBeforeGrid()) return;
+    }
     setSpec((s) => {
       const enc = { ...(s.encoding ?? {}) } as Record<string, Record<string, unknown>>;
       if (value === "histogram") {
@@ -904,6 +1038,13 @@ export function Visualizer({
       }
       return { ...s, mark: value, encoding: enc as ChartSpec["encoding"] };
     });
+  }
+  // The regular chart type underneath a trend grid (its mark/encoding are kept).
+  function chartTypeBeforeGrid() {
+    const x = spec.encoding?.x as Record<string, unknown> | undefined;
+    const y = spec.encoding?.y as Record<string, unknown> | undefined;
+    if (spec.mark === "bar" && x?.bin && y?.aggregate === "count") return "histogram";
+    return typeof spec.mark === "string" ? spec.mark : "bar";
   }
   // Outline emphasis needs a mark with a separate fill + border.
   const markStr = typeof spec.mark === "string" ? spec.mark : "bar";
@@ -1050,7 +1191,10 @@ export function Visualizer({
     a.click();
   }
 
-  const canRender = rows.length > 0 && Object.keys(spec.encoding ?? {}).length > 0;
+  const tgOk = isTrendGrid && tgResult?.ok ? tgResult : null;
+  const canRender = isTrendGrid
+    ? !!tgOk && tgOk.cells.length > 0
+    : rows.length > 0 && Object.keys(spec.encoding ?? {}).length > 0;
   const provenance = spec.data.entities.source;
   const input = "h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100";
   const iconBtn =
@@ -1086,7 +1230,7 @@ export function Visualizer({
         />
         <button
           onClick={() => setShowClear(true)}
-          disabled={spec.data.fields.length === 0 && spec.data.entities.ids.length === 0 && aiMsgs.length === 0 && !name}
+          disabled={spec.data.fields.length === 0 && spec.data.entities.ids.length === 0 && aiMsgs.length === 0 && !name && !isTrendGrid}
           className={`${iconBtn} text-slate-500 hover:text-red-600`}
           title="Clear the chart and Scout conversation (start fresh)"
         >
@@ -1098,6 +1242,12 @@ export function Visualizer({
       <div className="flex min-h-0 flex-1 gap-2">
         {/* LEFT — data */}
         <aside className="flex w-[27%] min-w-[280px] flex-col gap-3 overflow-y-auto [scrollbar-gutter:stable] rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+          {isTrendGrid && (
+            <p className="rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[11px] text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-300">
+              The trend grid uses its own settings on the right. The entities and fields here are kept for the
+              other chart types.
+            </p>
+          )}
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
             Entities ({spec.data.entities.ids.length})
           </p>
@@ -1287,11 +1437,25 @@ export function Visualizer({
             </div>
           ) : canRender ? (
             <div className="min-h-0 flex-1 overflow-hidden rounded-lg bg-white">
-              <VegaChart spec={spec} rows={rows} labels={axisLabels} zoom={zoom} onView={onChartView} />
+              {tgOk ? (
+                <TrendGridChart result={tgOk} spec={spec} zoom={zoom} onView={onChartView} />
+              ) : (
+                <VegaChart spec={spec} rows={rows} labels={axisLabels} zoom={zoom} onView={onChartView} />
+              )}
             </div>
           ) : (
             <div className="flex flex-1 items-center justify-center text-center text-sm text-slate-400">
-              {resolving ? "Loading data…" : "Pick entities + add a field on the left, then map fields on the right."}
+              {isTrendGrid
+                ? tgLoading
+                  ? "Ranking…"
+                  : tgResult && !tgResult.ok
+                    ? tgResult.error
+                    : tgResult?.ok
+                      ? "No assessment data for these settings."
+                      : "Choose a district and comparison group on the right."
+                : resolving
+                  ? "Loading data…"
+                  : "Pick entities + add a field on the left, then map fields on the right."}
             </div>
           )}
         </section>
@@ -1304,6 +1468,32 @@ export function Visualizer({
               {MARK_OPTIONS.map((m) => (<option key={m.value} value={m.value}>{m.label}</option>))}
             </select>
           </label>
+          {isTrendGrid ? (
+            <>
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-slate-600 dark:text-slate-300">Title</span>
+                <input
+                  value={spec.title ?? ""}
+                  onChange={(e) => setSpec((s) => ({ ...s, title: e.target.value || undefined }))}
+                  placeholder="Automatic title"
+                  className={`${input} w-full`}
+                />
+              </label>
+              <TrendGridControls
+                params={tgParams}
+                onChange={setTgParams}
+                entities={entities}
+                entitiesById={entitiesById}
+                counties={counties}
+                groups={groups}
+                years={tgOptions?.years ?? years.filter((y) => tgParams.years.includes(y))}
+                subgroups={tgOptions?.subgroups ?? [tgParams.subgroup]}
+                homeDistrictId={homeDistrictId}
+                input={input}
+              />
+            </>
+          ) : (
+          <>
           {chartType === "bar" && multiYear && (
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium text-slate-600 dark:text-slate-300">Multiple years</span>
@@ -1542,6 +1732,8 @@ export function Visualizer({
                 Set one or the other (or leave both blank for automatic).
               </span>
             </div>
+          )}
+          </>
           )}
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-slate-600 dark:text-slate-300">Palette</span>

@@ -8,7 +8,7 @@
 
 import { z } from "zod";
 
-export const CHART_ENGINES = ["vega-lite", "matrix.correlation", "matrix.similarity"] as const;
+export const CHART_ENGINES = ["vega-lite", "matrix.correlation", "matrix.similarity", "trendgrid"] as const;
 export type ChartEngine = (typeof CHART_ENGINES)[number];
 
 /** A named datapoint = metric code + subgroup + one or more years. */
@@ -105,7 +105,7 @@ export const chartSpecSchema = z.object({
   mark: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
   encoding: z.record(z.string(), channelSchema).optional(),
   transform: z.array(z.record(z.string(), z.unknown())).optional(),
-  // custom engines (matrix.*)
+  // custom engines (matrix.*, trendgrid — see trend-grid-spec.ts)
   params: z.record(z.string(), z.unknown()).optional(),
   // presentation
   theme: z.enum(["app", "print"]).default("app"),

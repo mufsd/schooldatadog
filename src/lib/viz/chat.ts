@@ -26,7 +26,18 @@ export type ChatResult =
 // Kept free of per-turn state (entity list, chart JSON) so it stays identical
 // across a conversation and the Ollama server can reuse the cached prompt prefix
 // (the big metric catalog) instead of re-evaluating it every turn.
+/** The NY school year a date falls in (July 1 starts a new one): 2026-11-24 -> "2026-27". */
+function schoolYearOf(d: Date): string {
+  const y = d.getFullYear();
+  const start = d.getMonth() >= 6 ? y : y - 1;
+  return `${start}-${String(start + 1).slice(-2)}`;
+}
+
 function systemPrompt(catalog: VizCatalog): string {
+  // Date only (no time) so the cached prompt prefix changes at most once a day.
+  const now = new Date();
+  const today = now.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const latestYear = [...catalog.years].sort().at(-1) ?? "(none)";
   const byCat = new Map<string, string[]>();
   for (const m of catalog.metrics) {
     const cat = m.category ?? "Other";
@@ -45,6 +56,9 @@ ${metricList}
 
 # Years (school years, use exact)
 ${catalog.years.join(", ")}
+
+# Today
+Today is ${today}; the current school year is ${schoolYearOf(now)}. The newest school year with ANY data is ${latestYear}. Do NOT assume the current year from your own training — use these facts. NYSED publishes with a lag and releases datasets in stages, so the newest year may have only some metrics (e.g. enrollment and test results before graduation or spending data). If the user asks for a year/metric that isn't in the data, say which is the newest year that has it.
 
 # Subgroups (demographic breakdowns; not every metric has every subgroup)
 ${catalog.subgroups.join(", ")}
@@ -74,6 +88,7 @@ A "chart" object looks like:
   "encoding": { "x": {"field":"<ref>","type":"nominal|ordinal|quantitative|temporal"}, "y": {...}, "color": {...}, "column": {...} },
   "title": "Chart title",
   "showLegend": true | false,   // optional — hide the colour/size legend
+  "dataLabels": true | false,   // optional — print each bar/point's value on the mark
   "theme": "app" | "print",      // optional — colour palette
   "refLines": [ { "axis": "y", "aggregate": "mean", "field": "<field id>", "label": "Average" } ]  // optional — dashed guide lines
 }
@@ -90,8 +105,29 @@ Rules:
   "opacity": { "condition": { "test": "datum.homeDistrict === 'My district'", "value": 1 }, "value": 0.3 }
   Keep any existing color encoding as-is. This works on every chart type (their bar/bin/point stays fully opaque while the rest dim). So you CAN highlight the user's district — do it this way, not by recolouring.
 - For a histogram: x = a field with {"bin": true}, y = {"aggregate": "count"}, mark "bar".
+- To show the NUMBERS on the bars/points ("label the bars", "show the values"), set "dataLabels": true. Do NOT add a "text" channel or a text layer — those are ignored. "dataLabels": false removes them.
+- To ORDER bars by their value, put "sort" on the category channel as a STRING: "-y" = high → low, "y" = low → high (for horizontal bars with the category on y: "-x" / "x"). "ascending" / "descending" sort the category names A→Z / Z→A. Example: "x": {"field":"entityName","type":"nominal","sort":"-y"}. Never use an object for "sort".
 - "entities":"keep" leaves the current entity set unchanged (this is the default when entities are already selected).
 - "refLines" (optional) draws dashed guide lines across the plot — a benchmark or average. Each: "axis" ("y" = horizontal line, "x" = vertical), then EITHER "value": <number> for a fixed line, OR "aggregate": "mean"|"median"|"min"|"max" with "field": <a field id> to compute it from the shown data. Give a short "label". You CAN do this — offer a reference line when an average or target would help (e.g. "add a line at the state average" → refLines with aggregate "mean" on the value field). Send "refLines": [] to remove them. Do NOT offer free-form text callouts, trend lines, or shaded regions — only these guide lines are supported.
+
+## Trend grid (a special chart type)
+For "trend grid", "decile rank", "how does my district rank against all districts by grade over the years" style requests (ELA / Math / Science state tests, grades 3-8), send this chart object INSTEAD of the one above:
+{
+  "engine": "trendgrid",
+  "title": "optional title",
+  "trendgrid": {
+    "target": "my district" | "<exact district name>",
+    "compareTo": "state" | {"counties": ["Westchester", ...]} | {"group": "Saved Group Name"},
+    "years": ["2023-24", ...],          // omit for all years with test data
+    "subgroup": "All Students",         // a subgroup from the list above
+    "subjects": ["ela", "math"],        // any of "ela", "math", "science" — one grid each
+    "grades": ["3","4","5","6","7","8"],  // add "all" for the grades-combined row
+    "measure": "proficient_pct" | "mean_score" | "tested_pct",
+    "buckets": 10 | 5 | 4,               // deciles (default), quintiles, quartiles
+    "useCombined": false                 // true = Math 6-8 / Science 8 include Regents takers ("combined" results)
+  }
+}
+Each cell shows the target's rank bucket (1 = top) among the comparison districts for that grade and year. Fields, entities and encoding are not used by a trend grid. To leave a trend grid for a regular chart, send a normal chart object with fields/mark/encoding.
 Keep charts readable. Output ONLY the JSON object, no prose outside it.`;
 }
 
