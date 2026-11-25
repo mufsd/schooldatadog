@@ -16,6 +16,8 @@ export type VizCatalog = {
   homeDistrict?: string | null;
   /** Entities already on the chart (e.g. from an imported view), by name. */
   selectedEntities?: string[];
+  /** The values actually plotted (CSV-ish text with ranks + summaries), per turn. */
+  chartData?: string;
 };
 
 export type ChatResult =
@@ -71,7 +73,8 @@ ${catalog.groups.length ? catalog.groups.join(", ") : "(none)"}
 # The user's home district
 ${catalog.homeDistrict ? `${catalog.homeDistrict} — when the user says "my district", they mean this one.` : "(not set — if the user references their district and you don't know it, ask.)"}
 
-The entities currently on the chart and the current chart JSON are included at the end of this message.
+The entities currently on the chart, the current chart JSON, and THE DATA CURRENTLY PLOTTED (the actual values, with ranks and summary stats already computed) are included at the end of this message.
+When the user asks about the numbers — who is highest/lowest, how many are above or below a district, a district's value, rank, the average, a gap between two entities — answer ONLY from "The data currently plotted". Quote the values, and use the given rank column and summaries instead of counting or sorting yourself (rank 1 = highest; "above" = a better rank). Entities with a blank value have no data (or are suppressed) — say so and leave them out of counts. Never estimate numbers from what a chart might look like. If the answer needs data that isn't plotted (another year, subgroup or metric), say so and offer to add it to the chart.
 If the user already has a selection, ALWAYS use "entities":"keep" so the chart is built from EXACTLY that set (they often chose it deliberately, e.g. by importing a view). Do NOT switch to "districts"/"schools"/"both" (all entities) unless the user explicitly says "all districts", "every school", "statewide", etc. A histogram/count over "these districts" means a count over the SELECTED set, not the whole state.
 
 ## How to respond
@@ -197,7 +200,9 @@ export async function buildVisualizerMessages(
   const entityLine = sel.length
     ? `${sel.length} selected: ${sel.slice(0, 80).join(", ")}${sel.length > 80 ? `, …(+${sel.length - 80} more)` : ""}`
     : "(none selected yet)";
-  const stateMsg = `# Entities currently on the chart\n${entityLine}\n\n# The current chart (JSON)\n${JSON.stringify(currentSpec)}`;
+  const stateMsg =
+    `# Entities currently on the chart\n${entityLine}\n\n# The current chart (JSON)\n${JSON.stringify(currentSpec)}` +
+    `\n\n# The data currently plotted\n${catalog.chartData ?? "(not available)"}`;
   return [
     { role: "system", content: `${systemPrompt(catalog)}\n\n${stateMsg}` },
     ...history,

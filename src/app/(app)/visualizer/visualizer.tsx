@@ -27,6 +27,7 @@ import type { WorkshopEntity } from "@/lib/workshop/queries";
 import type { MetricLite } from "@/lib/workshop/types";
 import { createChart, updateChart } from "@/lib/charts/actions";
 import { getViewForImport } from "@/lib/viz/actions";
+import { chartDataText, trendGridText } from "@/lib/viz/chart-data";
 import { visualizerChat, type ChatMessage } from "@/lib/viz/chat";
 import { columnsOf, resolveDataset, type Row } from "@/lib/viz/resolve";
 import { blankSpec, type CalcFieldSpec, type ChartSpec, type EntitySource, type FieldSpec } from "@/lib/viz/spec";
@@ -595,6 +596,7 @@ export function Visualizer({
       subgroups: STD_SUBGROUPS,
       groups: groups.map((g) => g.name),
       homeDistrict: homeDistrictName,
+      chartData: isTrendGrid ? trendGridText(tgResult) : chartDataText(rows, columns),
       selectedEntities: spec.data.entities.ids
         .map((id) => entitiesById.get(id)?.name)
         .filter((n): n is string => !!n),
