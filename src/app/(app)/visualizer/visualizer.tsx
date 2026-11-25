@@ -1251,13 +1251,24 @@ export function Visualizer({
       setSaveMsg("Saved.");
     } else setSaveMsg(res.error);
   }
-  async function exportImage(kind: "svg" | "png") {
+  // The chart renders on a transparent background, which most image viewers
+  // show as black — hiding the dark title and labels. PNG can be exported on
+  // white (the default) or kept transparent for placing on slides.
+  async function exportImage(kind: "svg" | "png", background: "white" | "transparent" = "white") {
     const view = viewRef.current;
     if (!view) return;
-    const url = kind === "svg" ? await view.toImageURL("svg") : await view.toImageURL("png", 3);
+    const prev = view.background();
+    const bg = background === "white" ? "#ffffff" : "transparent";
+    let url: string;
+    try {
+      if (bg !== prev) await view.background(bg).runAsync();
+      url = kind === "svg" ? await view.toImageURL("svg") : await view.toImageURL("png", 3);
+    } finally {
+      if (bg !== prev) await view.background(prev).runAsync();
+    }
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${(name || "visualization").replace(/\s+/g, "-")}.${kind}`;
+    a.download = `${(name || "visualization").replace(/\s+/g, "-")}${kind === "png" && background === "transparent" ? "-transparent" : ""}.${kind}`;
     a.click();
   }
 
@@ -1294,8 +1305,9 @@ export function Visualizer({
           buttonClassName={iconBtn}
           disabled={!canRender}
           items={[
-            { label: "SVG", onClick: () => exportImage("svg") },
-            { label: "PNG", onClick: () => exportImage("png") },
+            { label: "PNG — white background", onClick: () => exportImage("png", "white") },
+            { label: "PNG — transparent background", onClick: () => exportImage("png", "transparent") },
+            { label: "SVG", onClick: () => exportImage("svg", "white") },
           ]}
         />
         <button
