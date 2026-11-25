@@ -484,11 +484,15 @@ export function Visualizer({
     // fields — keep only ones whose metric code we recognise
     const rawFields = Array.isArray(c.fields) ? (c.fields as Record<string, unknown>[]) : null;
     if (rawFields) {
+      const rejected: string[] = [];
       const fields: FieldSpec[] = rawFields
         .map((f) => {
           const code = String(f.metric ?? "");
           const m = metricByCode.get(code);
-          if (!m) return null;
+          if (!m) {
+            rejected.push(`"${code || "(no metric)"}" isn't a metric in the data`);
+            return null;
+          }
           const yrs = Array.isArray(f.years) && f.years.length ? (f.years as string[]) : [year];
           return {
             id: String(f.id ?? newId("f")),
@@ -501,7 +505,29 @@ export function Visualizer({
             unit: m.unit,
           } as FieldSpec;
         })
-        .filter((f): f is FieldSpec => f !== null && f.years.length > 0);
+        .filter((f): f is FieldSpec => {
+          if (f && !f.years.length) rejected.push(`${f.label}: none of the requested years have data`);
+          return f !== null && f.years.length > 0;
+        });
+      if (rejected.length) {
+        const kept = !fields.length && rawFields.length > 0;
+        setAiMsgs((msgs) => [
+          ...msgs,
+          {
+            role: "assistant",
+            content:
+              `I couldn't use part of that change: ${rejected.join("; ")}.` +
+              (kept ? " I left your current fields in place. " : " ") +
+              "Tell me what you're after and I'll pick from the data that exists.",
+            error: true,
+          },
+        ]);
+        // Nothing usable: don't wipe the chart's fields.
+        if (!fields.length && rawFields.length > 0) {
+          setSpec((s) => repairEncoding({ ...s, ...aiOverrides(c, s) }));
+          return;
+        }
+      }
       setSpec((s) => repairEncoding({ ...s, ...aiOverrides(c, s), data: { ...s.data, fields, calc: [] } }));
     } else if (c.encoding || c.mark || typeof c.title === "string" || c.theme || "showLegend" in c) {
       setSpec((s) => repairEncoding({ ...s, ...aiOverrides(c, s) }));

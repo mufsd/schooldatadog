@@ -56,7 +56,24 @@ function toVegaLite(
   width: number,
   height: number,
 ) {
-  const enc = spec.encoding ?? {};
+  // A "sort by value" ("y", "-x", …) on a channel whose partner axis has no
+  // field or aggregate crashes Vega-Lite ("Cannot destructure property
+  // 'aggregate'…"). Drop such sorts so the chart still draws.
+  const enc = Object.fromEntries(
+    Object.entries(spec.encoding ?? {}).map(([ch, def]) => {
+      const d = (def ?? {}) as Record<string, unknown>;
+      const m = typeof d.sort === "string" ? /^-?([a-z]+)$/i.exec(d.sort) : null;
+      if (m && !["ascending", "descending"].includes(d.sort as string)) {
+        const target = (spec.encoding as Record<string, Record<string, unknown> | undefined> | undefined)?.[m[1]];
+        if (!target || (target.field === undefined && target.aggregate === undefined)) {
+          const rest = { ...d };
+          delete rest.sort;
+          return [ch, rest];
+        }
+      }
+      return [ch, def];
+    }),
+  ) as NonNullable<ChartSpec["encoding"]>;
   const faceted = "column" in enc || "row" in enc || "facet" in enc;
   const hideLegend = spec.showLegend === false;
   const LEGEND_CHANNELS = new Set(["color", "size", "shape", "opacity", "fill", "stroke"]);
