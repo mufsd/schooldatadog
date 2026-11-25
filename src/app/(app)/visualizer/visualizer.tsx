@@ -502,9 +502,9 @@ export function Visualizer({
           } as FieldSpec;
         })
         .filter((f): f is FieldSpec => f !== null && f.years.length > 0);
-      setSpec((s) => ({ ...s, ...aiOverrides(c, s), data: { ...s.data, fields, calc: [] } }));
+      setSpec((s) => repairEncoding({ ...s, ...aiOverrides(c, s), data: { ...s.data, fields, calc: [] } }));
     } else if (c.encoding || c.mark || typeof c.title === "string" || c.theme || "showLegend" in c) {
-      setSpec((s) => ({ ...s, ...aiOverrides(c, s) }));
+      setSpec((s) => repairEncoding({ ...s, ...aiOverrides(c, s) }));
     }
   }
 
@@ -553,6 +553,35 @@ export function Visualizer({
       title: typeof c.title === "string" ? c.title || undefined : s.title,
       theme: c.theme === "app" || c.theme === "print" ? c.theme : s.theme,
     }));
+  }
+
+  // Scout sometimes renames a field (e.g. "prof" -> "prof_ecdis") but leaves an
+  // axis pointing at a name that no longer exists: the chart then draws empty
+  // bars and NaN labels. Point any such channel at a real field instead — the
+  // only value field if there is one, else the first one not already used.
+  function repairEncoding(s: ChartSpec): ChartSpec {
+    const enc = s.encoding as Record<string, Record<string, unknown>> | undefined;
+    if (!enc) return s;
+    const builtins = new Set(["entityName", "county", "entityType", "year", "homeDistrict"]);
+    const valueIds = [...s.data.fields.map((f) => f.id), ...(s.data.calc ?? []).map((c) => c.id)];
+    const known = new Set([...builtins, ...valueIds]);
+    const used = new Set(Object.values(enc).map((d) => d?.field).filter((f): f is string => typeof f === "string" && known.has(f)));
+    let changed = false;
+    const out: Record<string, Record<string, unknown>> = {};
+    for (const [ch, def] of Object.entries(enc)) {
+      const f = def?.field;
+      if (typeof f !== "string" || known.has(f)) {
+        out[ch] = def;
+        continue;
+      }
+      const pick = valueIds.length === 1 ? valueIds[0] : valueIds.find((id) => !used.has(id));
+      changed = true;
+      if (pick) {
+        used.add(pick);
+        out[ch] = { ...def, field: pick };
+      } // else: no field to point at — drop the broken channel
+    }
+    return changed ? { ...s, encoding: out as ChartSpec["encoding"] } : s;
   }
 
   // Scout sometimes writes a Vega-Lite object sort ({field|encoding, order}).

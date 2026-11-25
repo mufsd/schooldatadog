@@ -99,6 +99,7 @@ Return the FULL chart object each time you change anything — include every fie
 Rules:
 - "metric" MUST be one of the codes above. "years" and "subgroup" MUST be from the lists above.
 - Field "id" is your short handle; reference it in encoding channels.
+- Every encoding "field" MUST be either a built-in column or the EXACT "id" of a field in the "fields" array you send. If you rename a field id (e.g. when changing the subgroup), update every channel that used the old id.
 - Encoding channel "field" is either a field id, or a built-in column: "entityName", "year", "county", "homeDistrict".
 - For a line over time: put MULTIPLE years on ONE field, then x = {"field":"year","type":"ordinal"}, y = that field, color = {"field":"entityName","type":"nominal"}.
 - For comparing entities on one metric: mark "bar", x = entityName, y = the field.
