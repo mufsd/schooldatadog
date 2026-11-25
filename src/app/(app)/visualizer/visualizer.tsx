@@ -857,18 +857,31 @@ export function Visualizer({
         Object.keys(s.encoding ?? {}).length === 0
           ? { x: { field: "entityName", type: "nominal" as const, sort: "-y" }, y: { field: f.id, type: "quantitative" as const } }
           : s.encoding;
-      return { ...s, data: { ...s.data, fields: [...s.data.fields, f] }, encoding: enc };
+      const next = repairEncoding({ ...s, data: { ...s.data, fields: [...s.data.fields, f] }, encoding: enc });
+      // A chart whose value axis is empty (e.g. its field was removed) would
+      // stay blank — or crash if sorted by value. Put the new field there.
+      const e = { ...(next.encoding ?? {}) } as Record<string, Record<string, unknown> | undefined>;
+      const empty = (d?: Record<string, unknown>) => !d || (d.field === undefined && d.aggregate === undefined);
+      const CAT = new Set(["entityName", "county", "entityType", "year", "homeDistrict"]);
+      const isCat = (d?: Record<string, unknown>) => typeof d?.field === "string" && CAT.has(d.field);
+      if (empty(e.y) && !empty(e.x) && isCat(e.x)) e.y = { ...(e.y ?? {}), field: f.id, type: "quantitative" };
+      else if (empty(e.x) && !empty(e.y) && isCat(e.y)) e.x = { ...(e.x ?? {}), field: f.id, type: "quantitative" };
+      return { ...next, encoding: e as ChartSpec["encoding"] };
     });
   }
+  // Removing a field re-points (or drops) any axis that used it, so no channel
+  // is left referring to a field that no longer exists.
   const removeField = (id: string) =>
-    setSpec((s) => ({
-      ...s,
-      data: {
-        ...s.data,
-        fields: s.data.fields.filter((f) => f.id !== id),
-        calc: s.data.calc.filter((c) => c.id !== id),
-      },
-    }));
+    setSpec((s) =>
+      repairEncoding({
+        ...s,
+        data: {
+          ...s.data,
+          fields: s.data.fields.filter((f) => f.id !== id),
+          calc: s.data.calc.filter((c) => c.id !== id),
+        },
+      }),
+    );
   const patchField = (id: string, patch: Partial<FieldSpec>) =>
     setSpec((s) => ({
       ...s,
